@@ -1,6 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 
-import type { CostBreakdown, PrintSettings } from "../utils/calculations"
+import type { PrintData, PrintSettings } from "../utils/calculations"
 import { DEFAULT_SETTINGS, calculateCost, fmt } from "../utils/calculations"
 
 export const config: PlasmoCSConfig = {
@@ -17,33 +17,28 @@ const OVERLAY_ID = "mw-calc-overlay"
 async function getSettings(): Promise<PrintSettings> {
   return new Promise((resolve) => {
     chrome.storage.local.get("printCalcSettings", (result) => {
-      resolve(result.printCalcSettings ?? DEFAULT_SETTINGS)
+      const saved = result.printCalcSettings
+      if (!saved) { resolve(DEFAULT_SETTINGS); return }
+      resolve({
+        ...DEFAULT_SETTINGS,
+        ...saved,
+      })
     })
   })
 }
 
 // ─── Parsing helpers ──────────────────────────────────────────────────────────
 
-/**
- * Match exact span text for a weight value: "13 g", "25 g", "4.5 g"
- */
 function spanToGrams(text: string): number | null {
   const m = text.match(/^(\d+\.?\d*)\s*g$/)
   return m ? parseFloat(m[1]) : null
 }
 
-/**
- * Match exact span text for a time value.
- * Handles:  "27 min" | "1h 23m" | "1.1 h" | "2 h"
- */
 function spanToMinutes(text: string): number | null {
-  // "27 min"
   const min = text.match(/^(\d+)\s*min$/)
   if (min) return parseInt(min[1])
-  // "1h 23m" or "1h"
   const hm = text.match(/^(\d+)\s*h(?:\s*(\d+)\s*m)?$/)
   if (hm) return parseInt(hm[1]) * 60 + (hm[2] ? parseInt(hm[2]) : 0)
-  // "1.1 h"
   const dh = text.match(/^(\d+\.?\d*)\s*h$/)
   if (dh) return Math.round(parseFloat(dh[1]) * 60)
   return null
@@ -51,10 +46,6 @@ function spanToMinutes(text: string): number | null {
 
 // ─── Popover data extraction ───────────────────────────────────────────────────
 
-/**
- * Reads the stable `.profile_detail` container in the hover popover.
- * Time format there is "1.1 h" (decimal hours); weight is "25 g" total.
- */
 function extractPopoverData(
   popover: Element
 ): { grams: number | null; minutes: number | null } {
@@ -86,10 +77,6 @@ interface PlateData {
   minutes: number
 }
 
-/**
- * Reads each plate's `.config_info` block inside the "Print Plates" dialog.
- * Time format there is "X min" (integer minutes); weight is "X g" per plate.
- */
 function extractDialogData(dialog: Element): PlateData[] {
   const plates: PlateData[] = []
   const plateIndexEls = Array.from(dialog.querySelectorAll(".plate_index"))
@@ -128,31 +115,25 @@ function removeOverlay() {
 
 function showCostOverlay(
   anchorEl: Element,
-  breakdown: CostBreakdown,
-  plates?: PlateData[]
+  printData: PrintData,
+  totalCost: number,
+  currencySymbol: string,
+  plates?: Array<PlateData & { cost: number }>
 ) {
   removeOverlay()
 
-  const { currencySymbol: s, filamentCost, electricityCost, totalCost,
-          filamentGrams, printTimeHours } = breakdown
+  const printTimeHours = printData.printTimeMinutes / 60
 
-  // Per-plate rows (only shown when coming from the dialog)
   const plateRows = plates
     ? plates
-        .map((p) => {
-          const pb = calculateCost(
-            { filamentGrams: p.grams, printTimeMinutes: p.minutes },
-            { filamentCostPerGram: breakdown.filamentCost / filamentGrams,
-              electricityCostPerKwh: 0, printerWattage: 0,
-              currencySymbol: s }
-          )
-          // recalculate properly using stored settings — passed via closure below
-          return `<tr>
+        .map(
+          (p) => `<tr>
             <td style="color:#6b7280;padding:2px 0;">${p.label}</td>
             <td style="color:#6b7280;text-align:center;padding:2px 8px;">${p.grams}g</td>
-            <td style="color:#6b7280;text-align:center;padding:2px 8px;">${p.minutes}m</td>
+            <td style="color:#6b7280;text-align:center;padding:2px 8px;">${Math.round(p.minutes)}m</td>
+            <td style="color:#6b7280;text-align:right;padding:2px 0;">${fmt(p.cost, currencySymbol)}</td>
           </tr>`
-        })
+        )
         .join("")
     : ""
 
@@ -163,10 +144,21 @@ function showCostOverlay(
             <th style="text-align:left;padding:2px 0;color:#9ca3af;font-weight:500;">Plate</th>
             <th style="text-align:center;padding:2px 8px;color:#9ca3af;font-weight:500;">Filament</th>
             <th style="text-align:center;padding:2px 8px;color:#9ca3af;font-weight:500;">Time</th>
+            <th style="text-align:right;padding:2px 0;color:#9ca3af;font-weight:500;">Cost</th>
           </tr>
         </thead>
         <tbody>${plateRows}</tbody>
       </table>`
+    : ""
+
+  const metaRows = !plates
+    ? `<div style="display:grid;grid-template-columns:1fr auto;gap:4px 12px;">
+        <span style="color:#6b7280;">Filament</span>
+        <span style="text-align:right;color:#6b7280;">${printData.filamentGrams.toFixed(1)}g</span>
+        <span style="color:#6b7280;">Print time</span>
+        <span style="text-align:right;color:#6b7280;">${printTimeHours.toFixed(2)}h</span>
+      </div>
+      <hr style="margin:0;border:none;border-top:1px solid #e0e7ff;">`
     : ""
 
   const overlay = document.createElement("div")
@@ -180,17 +172,10 @@ function showCostOverlay(
           font-size:16px;color:#6b7280;padding:0;line-height:1;">✕</button>
       </div>
       ${plateTable}
-      <hr style="margin:0;border:none;border-top:1px solid #e0e7ff;">
-      <div style="display:grid;grid-template-columns:1fr auto;gap:4px 12px;">
-        <span style="color:#6b7280;">Filament (${filamentGrams.toFixed(1)}g)</span>
-        <span style="text-align:right;">${fmt(filamentCost, s)}</span>
-        <span style="color:#6b7280;">Electricity (${printTimeHours.toFixed(2)}h)</span>
-        <span style="text-align:right;">${fmt(electricityCost, s)}</span>
-      </div>
-      <hr style="margin:0;border:none;border-top:1px solid #e0e7ff;">
+      ${metaRows}
       <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;">
         <span>Total</span>
-        <span style="color:#4f46e5;">${fmt(totalCost, s)}</span>
+        <span style="color:#4f46e5;">${fmt(totalCost, currencySymbol)}</span>
       </div>
     </div>
   `
@@ -230,6 +215,44 @@ function showCostOverlay(
   }, 0)
 }
 
+function showErrorOverlay(anchorEl: Element, message: string) {
+  removeOverlay()
+  const overlay = document.createElement("div")
+  overlay.id = OVERLAY_ID
+  overlay.innerHTML = `
+    <div style="font-family:system-ui,sans-serif;font-size:13px;color:#1e1b4b;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong style="font-size:14px;">🖨️ Print Cost</strong>
+        <button id="mw-calc-close" style="background:none;border:none;cursor:pointer;
+          font-size:16px;color:#6b7280;padding:0;line-height:1;">✕</button>
+      </div>
+      <p style="margin:0;color:#dc2626;font-size:12px;">Formula error: ${message}</p>
+    </div>
+  `
+  overlay.style.cssText = `
+    position: fixed;
+    z-index: 2147483647;
+    background: white;
+    border: 1px solid #fca5a5;
+    border-radius: 10px;
+    padding: 12px 14px;
+    box-shadow: 0 8px 24px rgba(220,38,38,0.15);
+    width: 248px;
+    box-sizing: border-box;
+  `
+  document.body.appendChild(overlay)
+
+  const rect = anchorEl.getBoundingClientRect()
+  const gap = 8
+  let top = Math.round(rect.top)
+  let left = Math.round(rect.right + gap)
+  if (left + 248 > window.innerWidth) left = Math.round(rect.left - 248 - gap)
+  overlay.style.top = `${top}px`
+  overlay.style.left = `${left}px`
+
+  document.getElementById("mw-calc-close")?.addEventListener("click", removeOverlay)
+}
+
 // ─── Popover button injection ─────────────────────────────────────────────────
 
 function injectIntoPopover(popover: Element) {
@@ -264,10 +287,13 @@ function injectIntoPopover(popover: Element) {
     e.stopPropagation()
     e.preventDefault()
     const settings = await getSettings()
-    showCostOverlay(
-      btn,
-      calculateCost({ filamentGrams: grams, printTimeMinutes: minutes }, settings)
-    )
+    const printData: PrintData = { filamentGrams: grams, printTimeMinutes: minutes }
+    try {
+      const total = calculateCost(printData, settings)
+      showCostOverlay(btn, printData, total, settings.currencySymbol)
+    } catch (err) {
+      showErrorOverlay(btn, err instanceof Error ? err.message : String(err))
+    }
   })
 
   const innerBox = popover.querySelector(".MuiBox-root .MuiBox-root") ?? popover
@@ -313,11 +339,23 @@ function injectIntoDialog(dialog: Element) {
     e.stopPropagation()
     e.preventDefault()
     const settings = await getSettings()
-    showCostOverlay(
-      btn,
-      calculateCost({ filamentGrams: totalGrams, printTimeMinutes: totalMinutes }, settings),
-      plates
-    )
+    try {
+      const platesWithCost = plates.map((p) => ({
+        ...p,
+        cost: calculateCost(
+          { filamentGrams: p.grams, printTimeMinutes: p.minutes },
+          settings
+        ),
+      }))
+      const totalPrintData: PrintData = {
+        filamentGrams: totalGrams,
+        printTimeMinutes: totalMinutes,
+      }
+      const totalCost = platesWithCost.reduce((sum, p) => sum + p.cost, 0)
+      showCostOverlay(btn, totalPrintData, totalCost, settings.currencySymbol, platesWithCost)
+    } catch (err) {
+      showErrorOverlay(btn, err instanceof Error ? err.message : String(err))
+    }
   })
 
   const dialogContent = dialog.querySelector(".MuiDialogContent-root")
@@ -349,7 +387,6 @@ const bodyObserver = new MutationObserver((mutations) => {
     for (const node of mutation.addedNodes) {
       if (!(node instanceof Element)) continue
 
-      // Popover
       const popover =
         node.id === POPOVER_ID ? node : node.querySelector?.(`#${POPOVER_ID}`)
       if (popover) {
@@ -358,7 +395,6 @@ const bodyObserver = new MutationObserver((mutations) => {
         watchPopoverContent(popover)
       }
 
-      // Dialog
       const dialog = node.matches(DIALOG_SELECTOR)
         ? node
         : node.querySelector?.(DIALOG_SELECTOR)
@@ -388,7 +424,6 @@ const bodyObserver = new MutationObserver((mutations) => {
 
 bodyObserver.observe(document.body, { childList: true })
 
-// Handle elements already in the DOM on load
 const existingPopover = document.getElementById(POPOVER_ID)
 if (existingPopover) {
   injectIntoPopover(existingPopover)

@@ -1,24 +1,36 @@
 import { useEffect, useState } from "react"
 
-import type { PrintSettings } from "./utils/calculations"
+import { ConstantsManager } from "./components/ConstantsManager"
+import { FormulaBuilder } from "./components/FormulaBuilder"
+import type { PrintSettings, UserConstant } from "./utils/calculations"
 import { DEFAULT_SETTINGS } from "./utils/calculations"
+import type { FormulaToken } from "./utils/formulaEngine"
 
 import "./popup.css"
 
 function SettingsPopup() {
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_SETTINGS)
   const [saved, setSaved] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get("printCalcSettings", (result) => {
-      const saved = result.printCalcSettings
-      if (!saved) return
+      const stored = result.printCalcSettings
+      if (!stored) { setSettingsLoaded(true); return }
+
       // Migrate old printerWattage (W) → energyKwhPerHour (kWh/hr)
-      if (saved.printerWattage !== undefined && saved.energyKwhPerHour === undefined) {
-        saved.energyKwhPerHour = saved.printerWattage / 1000
-        delete saved.printerWattage
+      if (stored.printerWattage !== undefined && stored.energyKwhPerHour === undefined) {
+        stored.energyKwhPerHour = stored.printerWattage / 1000
+        delete stored.printerWattage
       }
-      setSettings(saved)
+
+      // Populate new fields from defaults if absent
+      if (stored.failureRate === undefined) stored.failureRate = DEFAULT_SETTINGS.failureRate
+      if (stored.formulaTokens === undefined) stored.formulaTokens = DEFAULT_SETTINGS.formulaTokens
+      if (stored.userConstants === undefined) stored.userConstants = DEFAULT_SETTINGS.userConstants
+
+      setSettings({ ...DEFAULT_SETTINGS, ...stored })
+      setSettingsLoaded(true)
     })
   }, [])
 
@@ -33,6 +45,22 @@ function SettingsPopup() {
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     })
+  }
+
+  function savePartial(patch: Partial<PrintSettings>) {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch }
+      chrome.storage.local.set({ printCalcSettings: next })
+      return next
+    })
+  }
+
+  function handleConstantsChange(userConstants: UserConstant[]) {
+    savePartial({ userConstants })
+  }
+
+  function handleFormulaChange(formulaTokens: FormulaToken[]) {
+    savePartial({ formulaTokens })
   }
 
   return (
@@ -104,6 +132,24 @@ function SettingsPopup() {
 
       <div className="field-group">
         <label>
+          <span>Failure rate</span>
+          <span className="unit">decimal (0.1 = 10%)</span>
+        </label>
+        <div className="input-row">
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.01"
+            value={settings.failureRate}
+            onChange={(e) => handleChange("failureRate", e.target.value)}
+          />
+        </div>
+        <p className="hint">Use in formula as <code>failure_rate</code></p>
+      </div>
+
+      <div className="field-group">
+        <label>
           <span>Currency symbol</span>
         </label>
         <div className="input-row">
@@ -120,6 +166,25 @@ function SettingsPopup() {
       <button className={`save-btn ${saved ? "saved" : ""}`} onClick={save}>
         {saved ? "✓ Saved" : "Save Settings"}
       </button>
+
+      <hr className="section-divider" />
+
+      <ConstantsManager
+        constants={settings.userConstants}
+        onChange={handleConstantsChange}
+      />
+
+      <hr className="section-divider" />
+
+      {settingsLoaded && (
+        <FormulaBuilder
+          key="formula-builder"
+          tokens={settings.formulaTokens}
+          userConstants={settings.userConstants}
+          currencySymbol={settings.currencySymbol}
+          onChange={handleFormulaChange}
+        />
+      )}
     </div>
   )
 }

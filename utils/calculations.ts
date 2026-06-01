@@ -1,8 +1,20 @@
+import {
+  DEFAULT_FORMULA_TOKENS,
+  buildVariableValues,
+  evaluateTokens,
+} from "./formulaEngine"
+import type { FormulaToken, UserConstant } from "./formulaEngine"
+
+export type { FormulaToken, UserConstant }
+
 export interface PrintSettings {
   filamentCostPerGram: number
   electricityCostPerKwh: number
   energyKwhPerHour: number
+  failureRate: number
   currencySymbol: string
+  formulaTokens: FormulaToken[]
+  userConstants: UserConstant[]
 }
 
 export interface PrintData {
@@ -10,39 +22,22 @@ export interface PrintData {
   printTimeMinutes: number
 }
 
-export interface CostBreakdown {
-  filamentCost: number
-  electricityCost: number
-  totalCost: number
-  currencySymbol: string
-  filamentGrams: number
-  printTimeHours: number
-}
-
 export const DEFAULT_SETTINGS: PrintSettings = {
   filamentCostPerGram: 0.02,
   electricityCostPerKwh: 0.12,
   energyKwhPerHour: 0.2,
-  currencySymbol: "$"
+  failureRate: 0,
+  currencySymbol: "$",
+  formulaTokens: DEFAULT_FORMULA_TOKENS,
+  userConstants: [],
 }
 
-export function calculateCost(
-  data: PrintData,
-  settings: PrintSettings
-): CostBreakdown {
-  const filamentCost = data.filamentGrams * settings.filamentCostPerGram
-  const printTimeHours = data.printTimeMinutes / 60
-  const electricityCost =
-    settings.energyKwhPerHour * printTimeHours * settings.electricityCostPerKwh
-
-  return {
-    filamentCost,
-    electricityCost,
-    totalCost: filamentCost + electricityCost,
-    currencySymbol: settings.currencySymbol,
-    filamentGrams: data.filamentGrams,
-    printTimeHours
-  }
+export function calculateCost(data: PrintData, settings: PrintSettings): number {
+  return evaluateTokens(
+    settings.formulaTokens,
+    buildVariableValues(data, settings),
+    settings.userConstants
+  )
 }
 
 export function fmt(value: number, symbol: string): string {
