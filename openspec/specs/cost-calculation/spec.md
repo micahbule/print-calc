@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Cost is computed by evaluating the user's formula token sequence
-The system SHALL compute the print cost by evaluating the `formulaTokens` array saved in `PrintSettings` using the formula token evaluator, with variable values resolved from the current extracted print data and user settings. The result SHALL be a single numeric value representing total cost.
+The system SHALL compute the print cost by evaluating the `formulaTokens` array saved in `PrintSettings` using the formula token evaluator, with variable values resolved from the current extracted print data and user settings. The `pricePerGram` variable resolved during evaluation SHALL use the material-matched price from `materialPrices` (case-insensitive lookup by plate material name) or `defaultPricePerGram` if no match is found. The result SHALL be a single numeric value representing total cost.
 
 #### Scenario: Cost calculation uses custom token sequence
 - **WHEN** the user has saved a custom token sequence and clicks "Calculate Cost" on MakerWorld
@@ -14,3 +14,11 @@ The system SHALL compute the print cost by evaluating the `formulaTokens` array 
 #### Scenario: Invalid token sequence shows error in overlay
 - **WHEN** the saved token sequence is malformed or cannot be evaluated
 - **THEN** the overlay displays "Formula error: Incomplete formula" instead of a cost value and does not crash the content script
+
+#### Scenario: Cost calculation uses matched material price per gram
+- **WHEN** the extracted plate material matches a key in `materialPrices` (case-insensitive)
+- **THEN** the formula evaluates with that material's price per gram as the `pricePerGram` variable
+
+#### Scenario: Cost calculation uses default price when no material match
+- **WHEN** the extracted plate material is null or does not match any key in `materialPrices`
+- **THEN** the formula evaluates with `defaultPricePerGram` as the `pricePerGram` variable

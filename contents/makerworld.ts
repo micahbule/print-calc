@@ -1,7 +1,7 @@
 import type { PlasmoCSConfig } from "plasmo"
 
 import type { PrintData, PrintSettings } from "../utils/calculations"
-import { DEFAULT_SETTINGS, calculateCost, fmt } from "../utils/calculations"
+import { DEFAULT_SETTINGS, calculateCost, resolveFilamentPrice, fmt } from "../utils/calculations"
 
 export const config: PlasmoCSConfig = {
   matches: ["https://makerworld.com/*", "https://www.makerworld.com/*"]
@@ -75,6 +75,18 @@ interface PlateData {
   label: string
   grams: number
   minutes: number
+  material: string | null
+}
+
+function extractMaterial(configInfo: Element): string | null {
+  // Material chip lives in .filaments_info, a sibling of .config_info
+  const filamentsInfo = configInfo.parentElement?.querySelector(".filaments_info")
+  if (!filamentsInfo) return null
+  // Each chip has a name span formatted as "PETG｜" — grab the first chip's name
+  const nameSpan = filamentsInfo.querySelector("span:first-child")
+  if (!nameSpan) return null
+  // Strip the fullwidth bar separator (｜ U+FF5C) and any trailing whitespace
+  return (nameSpan.textContent ?? "").replace(/｜.*$/, "").trim() || null
 }
 
 function extractDialogData(dialog: Element): PlateData[] {
@@ -100,7 +112,8 @@ function extractDialogData(dialog: Element): PlateData[] {
 
     if (grams !== null && minutes !== null) {
       const idx = plateIndexEls[i]?.textContent?.trim() ?? String(i + 1)
-      plates.push({ label: `Plate ${idx}`, grams, minutes })
+      const material = extractMaterial(configInfo)
+      plates.push({ label: `Plate ${idx}`, grams, minutes, material })
     }
   })
 
@@ -118,7 +131,7 @@ function showCostOverlay(
   printData: PrintData,
   totalCost: number,
   currencySymbol: string,
-  plates?: Array<PlateData & { cost: number }>
+  plates?: Array<PlateData & { cost: number; effectivePrice: number }>
 ) {
   removeOverlay()
 
@@ -126,14 +139,20 @@ function showCostOverlay(
 
   const plateRows = plates
     ? plates
-        .map(
-          (p) => `<tr>
-            <td style="color:#6b7280;padding:2px 0;">${p.label}</td>
+        .map((p) => {
+          const priceLabel = p.material
+            ? `${p.material} @ ${currencySymbol}${p.effectivePrice.toFixed(3)}/g`
+            : `default @ ${currencySymbol}${p.effectivePrice.toFixed(3)}/g`
+          return `<tr>
+            <td style="color:#6b7280;padding:2px 0;">
+              <div>${p.label}</div>
+              <div style="font-size:10px;color:#9ca3af;">${priceLabel}</div>
+            </td>
             <td style="color:#6b7280;text-align:center;padding:2px 8px;">${p.grams}g</td>
             <td style="color:#6b7280;text-align:center;padding:2px 8px;">${Math.round(p.minutes)}m</td>
             <td style="color:#6b7280;text-align:right;padding:2px 0;">${fmt(p.cost, currencySymbol)}</td>
           </tr>`
-        )
+        })
         .join("")
     : ""
 
@@ -342,9 +361,11 @@ function injectIntoDialog(dialog: Element) {
     try {
       const platesWithCost = plates.map((p) => ({
         ...p,
+        effectivePrice: resolveFilamentPrice(p.material, settings),
         cost: calculateCost(
           { filamentGrams: p.grams, printTimeMinutes: p.minutes },
-          settings
+          settings,
+          p.material
         ),
       }))
       const totalPrintData: PrintData = {

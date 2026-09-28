@@ -2,6 +2,9 @@ import { useEffect, useState } from "react"
 
 import { ConstantsManager } from "./components/ConstantsManager"
 import { FormulaBuilder } from "./components/FormulaBuilder"
+import { MaterialPricesEditor } from "./components/MaterialPricesEditor"
+import { PrinterProfilesEditor } from "./components/PrinterProfilesEditor"
+import type { PrinterProfile } from "./utils/calculations"
 import type { PrintSettings, UserConstant } from "./utils/calculations"
 import { DEFAULT_SETTINGS } from "./utils/calculations"
 import type { FormulaToken } from "./utils/formulaEngine"
@@ -28,6 +31,12 @@ function SettingsPopup() {
       if (stored.failureRate === undefined) stored.failureRate = DEFAULT_SETTINGS.failureRate
       if (stored.formulaTokens === undefined) stored.formulaTokens = DEFAULT_SETTINGS.formulaTokens
       if (stored.userConstants === undefined) stored.userConstants = DEFAULT_SETTINGS.userConstants
+      if (stored.materialPrices === undefined) stored.materialPrices = {}
+      if (stored.defaultPricePerGram === undefined) {
+        stored.defaultPricePerGram = stored.filamentCostPerGram ?? DEFAULT_SETTINGS.defaultPricePerGram
+      }
+      if (stored.printerProfiles === undefined) stored.printerProfiles = []
+      if (stored.activePrinterId === undefined) stored.activePrinterId = null
 
       setSettings({ ...DEFAULT_SETTINGS, ...stored })
       setSettingsLoaded(true)
@@ -61,6 +70,22 @@ function SettingsPopup() {
 
   function handleFormulaChange(formulaTokens: FormulaToken[]) {
     savePartial({ formulaTokens })
+  }
+
+  function handleMaterialPricesChange(materialPrices: Record<string, number>) {
+    savePartial({ materialPrices })
+  }
+
+  function handleDefaultPriceChange(defaultPricePerGram: number) {
+    savePartial({ defaultPricePerGram })
+  }
+
+  function handlePrinterProfilesChange(printerProfiles: PrinterProfile[]) {
+    savePartial({ printerProfiles })
+  }
+
+  function handleActivePrinterChange(activePrinterId: string | null) {
+    savePartial({ activePrinterId })
   }
 
   return (
@@ -166,6 +191,26 @@ function SettingsPopup() {
       <button className={`save-btn ${saved ? "saved" : ""}`} onClick={save}>
         {saved ? "✓ Saved" : "Save Settings"}
       </button>
+
+      <hr className="section-divider" />
+
+      <MaterialPricesEditor
+        prices={settings.materialPrices}
+        defaultPricePerGram={settings.defaultPricePerGram}
+        currencySymbol={settings.currencySymbol}
+        onChange={handleMaterialPricesChange}
+        onDefaultChange={handleDefaultPriceChange}
+      />
+
+      <hr className="section-divider" />
+
+      <PrinterProfilesEditor
+        profiles={settings.printerProfiles}
+        activePrinterId={settings.activePrinterId}
+        currencySymbol={settings.currencySymbol}
+        onChange={handlePrinterProfilesChange}
+        onActiveChange={handleActivePrinterChange}
+      />
 
       <hr className="section-divider" />
 

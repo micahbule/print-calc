@@ -7,6 +7,12 @@ import type { FormulaToken, UserConstant } from "./formulaEngine"
 
 export type { FormulaToken, UserConstant }
 
+export interface PrinterProfile {
+  id: string
+  name: string
+  energyKwhPerHour: number
+}
+
 export interface PrintSettings {
   filamentCostPerGram: number
   electricityCostPerKwh: number
@@ -15,6 +21,10 @@ export interface PrintSettings {
   currencySymbol: string
   formulaTokens: FormulaToken[]
   userConstants: UserConstant[]
+  materialPrices: Record<string, number>
+  defaultPricePerGram: number
+  printerProfiles: PrinterProfile[]
+  activePrinterId: string | null
 }
 
 export interface PrintData {
@@ -30,13 +40,46 @@ export const DEFAULT_SETTINGS: PrintSettings = {
   currencySymbol: "$",
   formulaTokens: DEFAULT_FORMULA_TOKENS,
   userConstants: [],
+  materialPrices: {},
+  defaultPricePerGram: 0.02,
+  printerProfiles: [],
+  activePrinterId: null,
 }
 
-export function calculateCost(data: PrintData, settings: PrintSettings): number {
+export function resolveEnergyKwhPerHour(settings: PrintSettings): number {
+  if (!settings.activePrinterId) return settings.energyKwhPerHour
+  const profile = settings.printerProfiles.find((p) => p.id === settings.activePrinterId)
+  return profile ? profile.energyKwhPerHour : settings.energyKwhPerHour
+}
+
+export function resolveFilamentPrice(
+  material: string | null | undefined,
+  settings: PrintSettings
+): number {
+  if (!material) return settings.defaultPricePerGram
+  const key = Object.keys(settings.materialPrices).find(
+    (k) => k.toLowerCase() === material.toLowerCase()
+  )
+  return key !== undefined ? settings.materialPrices[key] : settings.defaultPricePerGram
+}
+
+export function calculateCost(
+  data: PrintData,
+  settings: PrintSettings,
+  material?: string | null
+): number {
+  const effectivePrice = resolveFilamentPrice(material, settings)
+  const effectiveEnergy = resolveEnergyKwhPerHour(settings)
+  const needsOverride =
+    effectivePrice !== settings.filamentCostPerGram ||
+    effectiveEnergy !== settings.energyKwhPerHour
+  const effectiveSettings = needsOverride
+    ? { ...settings, filamentCostPerGram: effectivePrice, energyKwhPerHour: effectiveEnergy }
+    : settings
   return evaluateTokens(
-    settings.formulaTokens,
-    buildVariableValues(data, settings),
-    settings.userConstants
+    effectiveSettings.formulaTokens,
+    buildVariableValues(data, effectiveSettings),
+    effectiveSettings.userConstants
   )
 }
 
